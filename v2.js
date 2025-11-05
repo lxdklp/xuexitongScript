@@ -12,21 +12,23 @@
     } else {
         initializePlayer();
     }
-
     function initializePlayer() {
         window.app = {
             configs: {
-                playbackRate: 1, /// 倍数（某些平台高倍数可能导致视频暂停，2倍是比较稳妥的速率）
-                autoplay: true, /// 自动播放
+                playbackRate: 1, // 播放速度设置为1倍速
+                autoplay: true, // 自动播放
             },
-            _videoEl: null,
-            _treeContainerEl: null,
+            _videoEl: null, // 当前视频元素
+            _treeContainerEl: null, // 课程章节容器
+            _tryTimes: 0, // 播放尝试次数
             _cellData: {
-                cells: 0, /// 总的章数量
-                nCells: 0, /// 总的课时（节点）数量
-                currentCellIndex: 0, // 当前所在的章
-                currentNCellIndex: 0, /// 当前所在的课时
-                currentVideoTitle: "", /// 当前选中视频的标题
+                cells: 0, // 总章节数
+                nCells: 0, // 总小节数
+                currentCellIndex: 0, // 当前章节索引
+                currentNCellIndex: 0, // 当前小节索引
+                currentVideoTitle: "", // 当前视频标题
+                totalCards: 0, // 当前小节总卡片数
+                currentCardIndex: 0, // 当前卡片索引
             },
             get cellData() {
                 return this._cellData;
@@ -35,52 +37,195 @@
                 this._getTreeContainer();
                 this._initCellData();
                 this._videoEl = null;
-                this._getVideoEl();
+                this._waitForVideoEl();
             },
-            /// 选择并播放下一小节视频（需要先调用run方法初始化数据）
+            async _waitForVideoEl() {
+                let retries = 10;
+                while (retries > 0) {
+                    try {
+                        const videoEl = this._getVideoEl();
+                        if (videoEl) {
+                            console.log("找到视频元素，准备播放");
+                            console.log("视频状态:", {
+                                readyState: videoEl.readyState,
+                                paused: videoEl.paused,
+                                duration: videoEl.duration,
+                                currentTime: videoEl.currentTime,
+                                src: videoEl.src
+                            });
+                            if (!videoEl.src || videoEl.src === '') {
+                                console.log("视频元素没有有效的src,跳过此卡片");
+                                this.nextUnit();
+                                return;
+                            }
+                            if (this.configs.autoplay) {
+                                await this._waitForVideoReady(videoEl);
+                                console.log("视频元数据已加载，开始播放");
+                                await this.play();
+                            }
+                            return;
+                        }
+                    } catch (e) {
+                        console.log("等待视频元素加载...", e.message);
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    retries--;
+                }
+                console.log("当前卡片没有视频或超时，跳转下一节");
+                this.nextUnit();
+            },
+            async _waitForVideoReady(videoEl) {
+                return new Promise((resolve) => {
+                    if (videoEl.readyState >= 1) {
+                        console.log("视频已准备就绪 (readyState >= 1)");
+                        resolve();
+                    } else {
+                        console.log("等待视频元数据加载...");
+                        const onReady = () => {
+                            videoEl.removeEventListener('loadedmetadata', onReady);
+                            console.log("视频元数据加载完成");
+                            resolve();
+                        };
+                        videoEl.addEventListener('loadedmetadata', onReady);
+                        setTimeout(() => {
+                            videoEl.removeEventListener('loadedmetadata', onReady);
+                            console.log("等待超时，强制继续");
+                            resolve();
+                        }, 5000);
+                    }
+                });
+            },
+            /// 选择并播放下一小节视频
             nextUnit() {
                 const el = this._getTreeContainer();
                 const cells = el.children("ul").children("li");
                 const nCells = $(cells.get(this._cellData.currentCellIndex)).find('.posCatalog_select:not(.firstLayer)');
+                const cardList = $("#prev_tab .prev_ul li");
+                console.log("检查下一个内容...");
+                console.log("当前状态:", {
+                    当前卡片: this._cellData.currentCardIndex + 1,
+                    总卡片数: cardList.length,
+                    当前小节: this._cellData.currentNCellIndex + 1,
+                    总小节数: nCells.length
+                });
+                if (cardList.length > this._cellData.currentCardIndex + 1) {
+                    this._cellData.currentCardIndex++;
+                    console.log(`切换到同一小节的下一个卡片: ${this._cellData.currentCardIndex + 1}/${cardList.length}`);
+                    const nextCard = cardList.eq(this._cellData.currentCardIndex);
+                    const cardTitle = nextCard.attr("title");
+                    console.log("下一个卡片标题:", cardTitle);
+                    if (cardTitle === "视频" || cardTitle === "Video") {
+                        console.log("可能是空的视频卡片,尝试播放...");
+                    }
+                    this.playCardByIndex(this._cellData.currentCardIndex);
+                    return;
+                }
                 if (nCells.length > this._cellData.currentNCellIndex + 1) {
-                    /// 当前大节点里面的小节点未播放完成
                     const nextNIndex = this._cellData.currentNCellIndex + 1;
+                    this._cellData.currentCardIndex = 0;
+                    console.log(`切换到下一小节: ${nextNIndex + 1}/${nCells.length}`);
                     this.playCurrentIndex(nCells.get(nextNIndex));
                 } else {
                     const nextIndex = this._cellData.currentCellIndex + 1;
                     if (nextIndex >= cells.length) {
-                        /// 当前课程已全部播放完成
-                        console.log("=====================================")
                         console.log("==============本课程学习完成了==============")
-                        console.log("=====================================")
                         return;
                     }
-                    console.log("切换下一个大节点", nextIndex)
-                    /// 切换下一个大节点
+                    console.log(`切换到下一章: ${nextIndex + 1}/${cells.length}`)
                     this._cellData.currentCellIndex = nextIndex;
                     this._cellData.currentNCellIndex = 0;
+                    this._cellData.currentCardIndex = 0;
                     this.playCurrentIndex();
                 }
-
             },
-            _tryTimes: 0,
+            playCardByIndex(cardIndex) {
+                const cardList = $("#prev_tab .prev_ul li");
+                if (cardIndex >= cardList.length) {
+                    console.error("卡片索引超出范围");
+                    return;
+                }
+                const card = cardList.eq(cardIndex);
+                const totalCards = cardList.length;
+                const chapterId = $("#chapterIdid").val();
+                const courseId = $("#curCourseId").val() || "254207994";
+                const clazzid = $("#curClazzId").val() || "132561743";
+                console.log(`播放卡片 ${cardIndex + 1}/${totalCards}`);
+                if (typeof changeDisplayContent === 'function') {
+                    changeDisplayContent(cardIndex + 1, totalCards, chapterId, courseId, clazzid, '');
+                }
+                this._videoEl = null;
+                this._tryTimes = 0;
+                setTimeout(() => {
+                    this._initCardData();
+                    this._waitForVideoEl();
+                }, 3000);
+            },
+            _initCardData() {
+                const cardList = $("#prev_tab .prev_ul li");
+                this._cellData.totalCards = cardList.length;
+                cardList.each((i, card) => {
+                    if ($(card).hasClass("active")) {
+                        this._cellData.currentCardIndex = i;
+                        const cardTitle = $(card).attr("title");
+                        if (cardTitle) {
+                            this._cellData.currentVideoTitle = cardTitle;
+                        }
+                    }
+                });
+            },
             /// 播放当前视频（需要先调用run方法初始化数据）
             async play() {
+                this._tryTimes = this._tryTimes || 0;
                 try {
                     const el = this._getVideoEl();
-                    /// 设置倍数，并播放
-                    el.playbackRate = this.configs.playbackRate;
-                    await el.play();
-                    this._tryTimes = 0;
-                } catch (e) {
-                    if (this._tryTimes > 5) {
-                        console.error("视频播放失败", e)
+                    if (!el) {
+                        console.log("当前小节没有视频，跳转下一节");
+                        this.nextUnit();
                         return;
                     }
+                    console.log("尝试播放视频 (第 " + (this._tryTimes + 1) + " 次)");
+                    if (el.readyState < 1) {
+                        console.log("视频未准备好，等待中...");
+                        await this._waitForVideoReady(el);
+                    }
+                    el.playbackRate = this.configs.playbackRate;
+                    console.log("设置播放速度:", this.configs.playbackRate);
+                    const playPromise = el.play();
+                    if (playPromise !== undefined) {
+                        await playPromise;
+                        console.log("视频开始播放");
+                        this._tryTimes = 0;
+                    }
+                } catch (e) {
+                    console.error("播放失败:", e.name, e.message);
+                    if (e.name === 'NotAllowedError') {
+                        console.log("需要用户交互才能播放，尝试点击播放按钮");
+                        this._clickPlayButton();
+                    }
+                    if (this._tryTimes >= 5) {
+                        console.error("多次播放失败，跳转下一节");
+                        this._tryTimes = 0;
+                        this.nextUnit();
+                        return;
+                    }
+                    this._tryTimes++;
                     setTimeout(() => {
-                        this._tryTimes++;
                         this.play();
                     }, 1000);
+                }
+            },
+            _clickPlayButton() {
+                try {
+                    const frameObj = $("iframe").eq(0).contents().find("iframe.ans-insertvideo-online");
+                    if (frameObj.length > 0) {
+                        const playButton = frameObj.contents().find(".vjs-big-play-button");
+                        if (playButton.length > 0) {
+                            console.log("点击播放按钮");
+                            playButton.click();
+                        }
+                    }
+                } catch (e) {
+                    console.log("无法点击播放按钮:", e.message);
                 }
             },
             /// 播放当前指向的小节视频（需要先调用run方法初始化数据）
@@ -94,19 +239,19 @@
                 const $nCell = $(nCell);
                 const clickableSpan = $nCell.find(".posCatalog_name")[0];
                 if (!clickableSpan) {
-                    console.error("===========找不到可点击的课程节点，播放下一个视频失败==============")
+                    console.error("找不到可点击的课程节点,播放下一个视频失败")
+                    this.nextUnit();
                     return;
                 }
-                $(clickableSpan).click(); /// 切换视频
+                $(clickableSpan).click();
                 this._videoEl = null;
-
-                /// 通过循环尝试的方式进行播放，以应对内容加载延迟
+                this._cellData.currentCardIndex = 0;
+                this._tryTimes = 0;
                 setTimeout(() => {
                     this._initCellData();
-                    if (this.configs.autoplay) {
-                        this.play();
-                    }
-                }, 1500) // 延迟可以适当调整，确保新视频有足够时间加载
+                    this._initCardData();
+                    this._waitForVideoEl();
+                }, 3000);
             },
             /**
              * 初始化课程章节数据
@@ -154,17 +299,34 @@
              * @private
              */
             _getVideoEl() {
-                if (!this._videoEl) {
-                    const frameObj = $("iframe").eq(0).contents().find("iframe.ans-insertvideo-online");
-                    if (frameObj.length === 0) {
-                        throw new Error("找不到视频播放区域iframe")
+                // 每次都重新获取,不使用缓存
+                const frameObj = $("iframe").eq(0).contents().find("iframe.ans-insertvideo-online");
+                if (frameObj.length === 0) {
+                    console.log("未找到视频iframe");
+                    return null;
+                }
+                console.log("找到", frameObj.length, "个视频iframe");
+                // 移除之前的事件监听器
+                if (this._videoEl) {
+                    const oldEl = this._videoEl;
+                    try {
+                        oldEl.removeEventListener("ended", this._onVideoEnded);
+                        oldEl.removeEventListener("loadedmetadata", this._onVideoLoaded);
+                        oldEl.removeEventListener("play", this._onVideoPlay);
+                        oldEl.removeEventListener("pause", this._onVideoPause);
+                    } catch (e) {
+                        // 忽略移除事件监听器时的错误
                     }
-                    this._videoEl = frameObj.contents().eq(0).find("video#video_html5_api").get(0);
-                    this._videoEventHandle();
                 }
+                // 获取当前卡片对应的视频元素
+                const currentIframeIndex = this._cellData.currentCardIndex < frameObj.length ? this._cellData.currentCardIndex : 0;
+                console.log("尝试获取第", currentIframeIndex + 1, "个iframe的视频");
+                this._videoEl = frameObj.contents().eq(currentIframeIndex).find("video#video_html5_api").get(0);
                 if (!this._videoEl) {
-                    throw new Error("视频组件Video未加载完成")
+                    console.log("在iframe中未找到video元素");
+                    return null;
                 }
+                this._videoEventHandle();
                 return this._videoEl;
             },
             /// 播放器事件处理
@@ -174,33 +336,29 @@
                     console.log("videoEl未加载");
                     return;
                 }
-                el.addEventListener("ended", e => {
+                this._onVideoEnded = (e) => {
                     const title = this._cellData.currentVideoTitle;
                     console.warn(`============'${title}' 播放完成=============`)
                     this.nextUnit();
-                })
-                el.addEventListener("loadedmetadata", e => {
+                };
+                this._onVideoLoaded = (e) => {
                     console.log(`============视频加载完成=============`)
-                    if (this.configs.autoplay) {
-                        this.play();
-                    }
-                })
-                el.addEventListener("play", e => {
+                };
+                this._onVideoPlay = (e) => {
                     const title = this._cellData.currentVideoTitle;
                     console.info(`============'${title}' 开始播放=============`)
-                })
-                el.addEventListener("pause", e => {
+                };
+                this._onVideoPause = (e) => {
                     console.log("============视频已暂停=============")
-                })
-                if (this.configs.autoplay) {
-                    this.play();
-                }
+                };
+                el.addEventListener("ended", this._onVideoEnded);
+                el.addEventListener("loadedmetadata", this._onVideoLoaded);
+                el.addEventListener("play", this._onVideoPlay);
+                el.addEventListener("pause", this._onVideoPause);
             },
         }
-
         try {
-             window.app.run();
-
+            window.app.run();
             // 防止鼠标移出页面后视频自动暂停
             document.onmouseleave = e => {
                 e.stopPropagation();
