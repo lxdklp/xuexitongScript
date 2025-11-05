@@ -27,8 +27,8 @@
                 currentCellIndex: 0, // 当前章节索引
                 currentNCellIndex: 0, // 当前小节索引
                 currentVideoTitle: "", // 当前视频标题
-                totalCards: 0, // 当前小节总卡片数
-                currentCardIndex: 0, // 当前卡片索引
+                currentVideoIndex: 0, // 当前视频索引
+                totalVideos: 0, // 总视频数
             },
             get cellData() {
                 return this._cellData;
@@ -37,6 +37,7 @@
                 this._getTreeContainer();
                 this._initCellData();
                 this._videoEl = null;
+                this._countVideos();
                 this._waitForVideoEl();
             },
             async _waitForVideoEl() {
@@ -47,14 +48,13 @@
                         if (videoEl) {
                             console.log("找到视频元素，准备播放");
                             console.log("视频状态:", {
+                                当前视频: this._cellData.currentVideoIndex + 1,
+                                总视频: this._cellData.totalVideos,
                                 readyState: videoEl.readyState,
-                                paused: videoEl.paused,
-                                duration: videoEl.duration,
-                                currentTime: videoEl.currentTime,
                                 src: videoEl.src
                             });
                             if (!videoEl.src || videoEl.src === '') {
-                                console.log("视频元素没有有效的src,跳过此卡片");
+                                console.log("视频元素没有有效的src,跳过");
                                 this.nextUnit();
                                 return;
                             }
@@ -71,7 +71,7 @@
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     retries--;
                 }
-                console.log("当前卡片没有视频或超时，跳转下一节");
+                console.log("当前没有视频或超时，跳转下一节");
                 this.nextUnit();
             },
             async _waitForVideoReady(videoEl) {
@@ -100,29 +100,28 @@
                 const el = this._getTreeContainer();
                 const cells = el.children("ul").children("li");
                 const nCells = $(cells.get(this._cellData.currentCellIndex)).find('.posCatalog_select:not(.firstLayer)');
-                const cardList = $("#prev_tab .prev_ul li");
                 console.log("检查下一个内容...");
                 console.log("当前状态:", {
-                    当前卡片: this._cellData.currentCardIndex + 1,
-                    总卡片数: cardList.length,
+                    当前视频: this._cellData.currentVideoIndex + 1,
+                    总视频: this._cellData.totalVideos,
                     当前小节: this._cellData.currentNCellIndex + 1,
                     总小节数: nCells.length
                 });
-                if (cardList.length > this._cellData.currentCardIndex + 1) {
-                    this._cellData.currentCardIndex++;
-                    console.log(`切换到同一小节的下一个卡片: ${this._cellData.currentCardIndex + 1}/${cardList.length}`);
-                    const nextCard = cardList.eq(this._cellData.currentCardIndex);
-                    const cardTitle = nextCard.attr("title");
-                    console.log("下一个卡片标题:", cardTitle);
-                    if (cardTitle === "视频" || cardTitle === "Video") {
-                        console.log("可能是空的视频卡片,尝试播放...");
-                    }
-                    this.playCardByIndex(this._cellData.currentCardIndex);
+                // 检查当前小节是否还有更多视频
+                if (this._cellData.totalVideos > this._cellData.currentVideoIndex + 1) {
+                    this._cellData.currentVideoIndex++;
+                    console.log(`播放下一个视频: ${this._cellData.currentVideoIndex + 1}/${this._cellData.totalVideos}`);
+                    this._videoEl = null;
+                    this._tryTimes = 0;
+                    setTimeout(() => {
+                        this._waitForVideoEl();
+                    }, 1000);
                     return;
                 }
+                // 当前小节所有视频播放完,切换到下一小节
                 if (nCells.length > this._cellData.currentNCellIndex + 1) {
                     const nextNIndex = this._cellData.currentNCellIndex + 1;
-                    this._cellData.currentCardIndex = 0;
+                    this._cellData.currentVideoIndex = 0;
                     console.log(`切换到下一小节: ${nextNIndex + 1}/${nCells.length}`);
                     this.playCurrentIndex(nCells.get(nextNIndex));
                 } else {
@@ -134,44 +133,20 @@
                     console.log(`切换到下一章: ${nextIndex + 1}/${cells.length}`)
                     this._cellData.currentCellIndex = nextIndex;
                     this._cellData.currentNCellIndex = 0;
-                    this._cellData.currentCardIndex = 0;
+                    this._cellData.currentVideoIndex = 0;
                     this.playCurrentIndex();
                 }
             },
-            playCardByIndex(cardIndex) {
-                const cardList = $("#prev_tab .prev_ul li");
-                if (cardIndex >= cardList.length) {
-                    console.error("卡片索引超出范围");
-                    return;
+            // 统计当前小节的视频数量
+            _countVideos() {
+                try {
+                    const frameObj = $("iframe").eq(0).contents().find("iframe.ans-insertvideo-online");
+                    this._cellData.totalVideos = frameObj.length;
+                    console.log("当前小节包含", this._cellData.totalVideos, "个视频");
+                } catch (e) {
+                    console.log("统计视频数量失败:", e.message);
+                    this._cellData.totalVideos = 0;
                 }
-                const card = cardList.eq(cardIndex);
-                const totalCards = cardList.length;
-                const chapterId = $("#chapterIdid").val();
-                const courseId = $("#curCourseId").val() || "254207994";
-                const clazzid = $("#curClazzId").val() || "132561743";
-                console.log(`播放卡片 ${cardIndex + 1}/${totalCards}`);
-                if (typeof changeDisplayContent === 'function') {
-                    changeDisplayContent(cardIndex + 1, totalCards, chapterId, courseId, clazzid, '');
-                }
-                this._videoEl = null;
-                this._tryTimes = 0;
-                setTimeout(() => {
-                    this._initCardData();
-                    this._waitForVideoEl();
-                }, 3000);
-            },
-            _initCardData() {
-                const cardList = $("#prev_tab .prev_ul li");
-                this._cellData.totalCards = cardList.length;
-                cardList.each((i, card) => {
-                    if ($(card).hasClass("active")) {
-                        this._cellData.currentCardIndex = i;
-                        const cardTitle = $(card).attr("title");
-                        if (cardTitle) {
-                            this._cellData.currentVideoTitle = cardTitle;
-                        }
-                    }
-                });
             },
             /// 播放当前视频（需要先调用run方法初始化数据）
             async play() {
@@ -245,11 +220,11 @@
                 }
                 $(clickableSpan).click();
                 this._videoEl = null;
-                this._cellData.currentCardIndex = 0;
+                this._cellData.currentVideoIndex = 0;
                 this._tryTimes = 0;
                 setTimeout(() => {
                     this._initCellData();
-                    this._initCardData();
+                    this._countVideos();
                     this._waitForVideoEl();
                 }, 3000);
             },
@@ -299,14 +274,12 @@
              * @private
              */
             _getVideoEl() {
-                // 每次都重新获取,不使用缓存
                 const frameObj = $("iframe").eq(0).contents().find("iframe.ans-insertvideo-online");
                 if (frameObj.length === 0) {
                     console.log("未找到视频iframe");
                     return null;
                 }
                 console.log("找到", frameObj.length, "个视频iframe");
-                // 移除之前的事件监听器
                 if (this._videoEl) {
                     const oldEl = this._videoEl;
                     try {
@@ -315,11 +288,10 @@
                         oldEl.removeEventListener("play", this._onVideoPlay);
                         oldEl.removeEventListener("pause", this._onVideoPause);
                     } catch (e) {
-                        // 忽略移除事件监听器时的错误
+                        // 忽略
                     }
                 }
-                // 获取当前卡片对应的视频元素
-                const currentIframeIndex = this._cellData.currentCardIndex < frameObj.length ? this._cellData.currentCardIndex : 0;
+                const currentIframeIndex = this._cellData.currentVideoIndex < frameObj.length ? this._cellData.currentVideoIndex : 0;
                 console.log("尝试获取第", currentIframeIndex + 1, "个iframe的视频");
                 this._videoEl = frameObj.contents().eq(currentIframeIndex).find("video#video_html5_api").get(0);
                 if (!this._videoEl) {
